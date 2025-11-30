@@ -1,32 +1,43 @@
 pipeline {
     agent any
+
     environment {
-        DOCKER_HUB_DEV = "maruvarasivasu/react-app-dev"
-        DOCKER_HUB_PROD = "maruvarasivasu/react-app-prod"
+        DEV_IMAGE = "yourdockerhubusername/dev:latest"
+        PROD_IMAGE = "yourdockerhubusername/prod:latest"
+        APP_PORT = "80"
     }
+
     stages {
-        stage('Checkout') {
+
+        stage('Checkout Code') {
             steps {
-                git branch: 'main', url: 'https://github.com/MaruvarasiVasu/devops-build.git'
+                git branch: "${env.BRANCH_NAME}", url: 'https://github.com/MaruvarasiVasu/devops-build.git'
             }
         }
 
         stage('Set Branch') {
             steps {
                 script {
-                    env.CURRENT_BRANCH = env.BRANCH_NAME ?: sh(script: "git rev-parse --abbrev-ref HEAD", returnStdout: true).trim()
+                    env.CURRENT_BRANCH = sh(script: 'git rev-parse --abbrev-ref HEAD', returnStdout: true).trim()
                     echo "Current branch: ${env.CURRENT_BRANCH}"
                 }
+            }
+        }
+
+        stage('Install Dependencies & Build React App') {
+            steps {
+                sh 'npm install'
+                sh 'npm run build'   // creates build/ folder for Dockerfile
             }
         }
 
         stage('Build Docker Image') {
             steps {
                 script {
-                    if (env.CURRENT_BRANCH == 'main') {  // Treat main as dev
-                        sh "docker build -t $DOCKER_HUB_DEV:latest ."
-                    } else {
-                        echo "Branch ${env.CURRENT_BRANCH} does not trigger Docker build."
+                    if (env.CURRENT_BRANCH == 'dev') {
+                        sh "docker build -t ${DEV_IMAGE} ."
+                    } else if (env.CURRENT_BRANCH == 'main') {
+                        sh "docker build -t ${PROD_IMAGE} ."
                     }
                 }
             }
@@ -35,13 +46,12 @@ pipeline {
         stage('Push Docker Image') {
             steps {
                 script {
-                    withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', 
-                                                      usernameVariable: 'DOCKER_USER', 
-                                                      passwordVariable: 'DOCKER_PASS')]) {
-                        sh 'echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin'
-                        if (env.CURRENT_BRANCH == 'main') {
-                            sh "docker push $DOCKER_HUB_DEV:latest"
-                        }
+                    if (env.CURRENT_BRANCH == 'dev') {
+                        sh "docker login -u yourdockerhubusername -p yourdockerhubpassword"
+                        sh "docker push ${DEV_IMAGE}"
+                    } else if (env.CURRENT_BRANCH == 'main') {
+                        sh "docker login -u yourdockerhubusername -p yourdockerhubpassword"
+                        sh "docker push ${PROD_IMAGE}"
                     }
                 }
             }
@@ -50,17 +60,18 @@ pipeline {
         stage('Deploy') {
             steps {
                 script {
-                    if (env.CURRENT_BRANCH == 'main') {
-                        sh "docker stop react-app || true && docker rm react-app || true && docker run -d -p 80:80 --name react-app $DOCKER_HUB_DEV:latest"
-                    }
+                    sh './deploy.sh'
                 }
             }
         }
     }
 
     post {
-        always {
-            echo "Pipeline finished for branch ${env.CURRENT_BRANCH}"
+        success {
+            echo "Pipeline completed successfully for branch ${env.CURRENT_BRANCH}"
+        }
+        failure {
+            echo "Pipeline failed. Check logs for errors."
         }
     }
 }
