@@ -2,10 +2,8 @@ pipeline {
     agent any
 
     environment {
-        DEV_IMAGE = "maruvarasivasu/react-app-dev:latest"
         PROD_IMAGE = "maruvarasivasu/react-app-prod:latest"
-        DOCKER_USER = credentials('docker-username')  // Jenkins credential ID for Docker username
-        DOCKER_PASS = credentials('docker-password')  // Jenkins credential ID for Docker password
+        DOCKER_CRED = 'docker-hub-creds' // Jenkins credential ID for Docker Hub
     }
 
     stages {
@@ -26,10 +24,15 @@ pipeline {
 
         stage('Install & Build React App') {
             steps {
-                sh '''
-                npm install
-                npm run build
-                '''
+                script {
+                    // Using Node Docker container to avoid npm issues on host
+                    docker.image('node:20-alpine').inside {
+                        sh '''
+                        npm install
+                        npm run build
+                        '''
+                    }
+                }
             }
         }
 
@@ -44,7 +47,7 @@ pipeline {
         stage('Push Docker Image') {
             steps {
                 script {
-                    withCredentials([usernamePassword(credentialsId: 'docker-hub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                    withCredentials([usernamePassword(credentialsId: "${DOCKER_CRED}", usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                         sh '''
                         echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
                         docker push ${PROD_IMAGE}
@@ -58,13 +61,23 @@ pipeline {
             steps {
                 script {
                     sh '''
-                    # Stop and remove old container if exists
-                    docker ps -q --filter "name=react-app" | xargs -r docker stop
-                    docker ps -a -q --filter "name=react-app" | xargs -r docker rm
+                    # Stop & remove old container if exists
+                    docker ps -q --filter "name=react-app" | xargs -r docker stop || true
+                    docker ps -a -q --filter "name=react-app" | xargs -r docker rm || true
 
                     # Run new container
                     docker run -d -p 80:80 --name react-app ${PROD_IMAGE}
                     '''
+                }
+            }
+        }
+
+        stage('Health Check') {
+            steps {
+                script {
+                    // Simple curl check to ensure app is running
+                    sh 'curl -f http://localhost || exit 1'
+                    echo "Application is up and running!"
                 }
             }
         }
@@ -76,3 +89,6 @@ pipeline {
         }
         failure {
             echo "Pipeline failed. Check logs for details."
+        }
+    }
+}
