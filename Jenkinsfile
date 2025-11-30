@@ -8,25 +8,26 @@ pipeline {
     }
 
     stages {
+
         stage('Checkout Code') {
             steps {
-                git branch: "${env.BRANCH_NAME}", url: 'https://github.com/MaruvarasiVasu/devops-build.git'
-            }
-        }
-
-        stage('Set Branch') {
-            steps {
                 script {
-                    env.CURRENT_BRANCH = sh(script: 'git rev-parse --abbrev-ref HEAD', returnStdout: true).trim()
-                    echo "Current branch: ${env.CURRENT_BRANCH}"
+                    // Determine branch to build
+                    def branchToBuild = env.BRANCH_NAME ?: 'main'
+                    echo "Building branch: ${branchToBuild}"
+                    
+                    // Checkout code
+                    git branch: branchToBuild, url: 'https://github.com/MaruvarasiVasu/devops-build.git'
+                    
+                    env.CURRENT_BRANCH = branchToBuild
                 }
             }
         }
 
-        stage('Install & Build React App') {
+        stage('Install Dependencies & Build React App') {
             steps {
                 sh 'npm install'
-                sh 'npm run build'
+                sh 'npm run build'   // creates build/ folder for Dockerfile
             }
         }
 
@@ -34,8 +35,10 @@ pipeline {
             steps {
                 script {
                     if (env.CURRENT_BRANCH == 'dev') {
+                        echo "Building Docker image for DEV"
                         sh "docker build -t ${DEV_IMAGE} ."
                     } else if (env.CURRENT_BRANCH == 'main') {
+                        echo "Building Docker image for PROD"
                         sh "docker build -t ${PROD_IMAGE} ."
                     }
                 }
@@ -45,11 +48,13 @@ pipeline {
         stage('Push Docker Image') {
             steps {
                 script {
+                    sh "docker login -u maruvarasivasu -p yourdockerhubpassword"
+                    
                     if (env.CURRENT_BRANCH == 'dev') {
-                        sh "docker login -u maruvarasivasu -p yourdockerhubpassword"
+                        echo "Pushing Docker image to DEV repo"
                         sh "docker push ${DEV_IMAGE}"
                     } else if (env.CURRENT_BRANCH == 'main') {
-                        sh "docker login -u maruvarasivasu -p yourdockerhubpassword"
+                        echo "Pushing Docker image to PROD repo"
                         sh "docker push ${PROD_IMAGE}"
                     }
                 }
