@@ -5,7 +5,7 @@ FROM nginx:alpine
 RUN rm -rf /usr/share/nginx/html/*
 
 # Copy the pre-built build folder from devops-build into Nginx html
-COPY devops-build/build/ /usr/share/nginx/html
+COPY build/ /usr/share/nginx/html
 
 # Optional: copy _redirects if it exists (skip if not)
 # COPY devops-build/_redirects /usr/share/nginx/html/_redirects
