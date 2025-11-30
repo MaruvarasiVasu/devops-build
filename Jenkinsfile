@@ -5,12 +5,11 @@ pipeline {
         DOCKER_HUB_PROD = "maruvarasivasu/react-app-prod"
     }
     stages {
-        stage('Checkout') {
-            steps {
-                // Checkout the branch that triggered the build
-                git branch: "${env.BRANCH_NAME}", url: 'https://github.com/MaruvarasiVasu/devops-build.git'
-            }
-        }
+       stage('Checkout') {
+    steps {
+        git branch: 'main', url: 'https://github.com/MaruvarasiVasu/devops-build.git'
+    }
+}
         stage('Build Docker Image') {
             steps {
                 script {
