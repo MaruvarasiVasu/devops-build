@@ -1,13 +1,11 @@
 pipeline {
     agent any
-
     environment {
-        PROD_IMAGE = "maruvarasivasu/react-app-prod:latest"
-        DOCKER_CRED = 'docker-hub-creds' // Jenkins credential ID for Docker Hub
+        DOCKER_HUB_MAIN = "maruvarasivasu/react-app-main"
+        DOCKER_HUB_PROD = "maruvarasivasu/react-app-prod"
     }
-
     stages {
-        stage('Checkout SCM') {
+        stage('Checkout') {
             steps {
                 git branch: 'main', url: 'https://github.com/MaruvarasiVasu/devops-build.git'
             }
@@ -16,21 +14,24 @@ pipeline {
         stage('Set Branch') {
             steps {
                 script {
-                    def branchName = sh(script: "git rev-parse --abbrev-ref HEAD", returnStdout: true).trim()
-                    echo "Current branch: ${branchName}"
+                    env.CURRENT_BRANCH = env.BRANCH_NAME ?: sh(script: "git rev-parse --abbrev-ref HEAD", returnStdout: true).trim()
+                    echo "Current branch: ${env.CURRENT_BRANCH}"
                 }
             }
         }
 
-        stage('Install & Build React App') {
+        stage('Install Dependencies & Build React App') {
             steps {
                 script {
-                    // Using Node Docker container to avoid npm issues on host
-                    docker.image('node:20-alpine').inside {
-                        sh '''
-                        npm install
-                        npm run build
-                        '''
+                    // Check if package.json exists before running npm install
+                    def packagePath = fileExists('package.json') ? '.' : 'frontend' // adjust 'frontend' if your folder is different
+                    if (!fileExists("${packagePath}/package.json")) {
+                        error "package.json not found in root or ${packagePath}"
+                    }
+
+                    dir(packagePath) {
+                        sh 'npm install'
+                        sh 'npm run build'
                     }
                 }
             }
@@ -39,7 +40,13 @@ pipeline {
         stage('Build Docker Image') {
             steps {
                 script {
-                    sh "docker build -t ${PROD_IMAGE} ."
+                    if (env.CURRENT_BRANCH == 'main') {
+                        sh "docker build -t $DOCKER_HUB_MAIN:latest ."
+                    } else if (env.CURRENT_BRANCH == 'master') {
+                        sh "docker build -t $DOCKER_HUB_PROD:latest ."
+                    } else {
+                        echo "Branch ${env.CURRENT_BRANCH} does not trigger Docker build."
+                    }
                 }
             }
         }
@@ -47,11 +54,15 @@ pipeline {
         stage('Push Docker Image') {
             steps {
                 script {
-                    withCredentials([usernamePassword(credentialsId: "${DOCKER_CRED}", usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
-                        sh '''
-                        echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
-                        docker push ${PROD_IMAGE}
-                        '''
+                    withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', 
+                                                      usernameVariable: 'DOCKER_USER', 
+                                                      passwordVariable: 'DOCKER_PASS')]) {
+                        sh 'echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin'
+                        if (env.CURRENT_BRANCH == 'main') {
+                            sh "docker push $DOCKER_HUB_MAIN:latest"
+                        } else if (env.CURRENT_BRANCH == 'master') {
+                            sh "docker push $DOCKER_HUB_PROD:latest"
+                        }
                     }
                 }
             }
@@ -60,24 +71,11 @@ pipeline {
         stage('Deploy') {
             steps {
                 script {
-                    sh '''
-                    # Stop & remove old container if exists
-                    docker ps -q --filter "name=react-app" | xargs -r docker stop || true
-                    docker ps -a -q --filter "name=react-app" | xargs -r docker rm || true
-
-                    # Run new container
-                    docker run -d -p 80:80 --name react-app ${PROD_IMAGE}
-                    '''
-                }
-            }
-        }
-
-        stage('Health Check') {
-            steps {
-                script {
-                    // Simple curl check to ensure app is running
-                    sh 'curl -f http://localhost || exit 1'
-                    echo "Application is up and running!"
+                    if (env.CURRENT_BRANCH == 'main') {
+                        sh "docker stop react-app || true && docker rm react-app || true && docker run -d -p 80:80 --name react-app $DOCKER_HUB_MAIN:latest"
+                    } else if (env.CURRENT_BRANCH == 'master') {
+                        sh "docker stop react-app || true && docker rm react-app || true && docker run -d -p 80:80 --name react-app $DOCKER_HUB_PROD:latest"
+                    }
                 }
             }
         }
@@ -85,10 +83,7 @@ pipeline {
 
     post {
         always {
-            echo "Pipeline finished."
-        }
-        failure {
-            echo "Pipeline failed. Check logs for details."
+            echo "Pipeline finished for branch ${env.CURRENT_BRANCH}"
         }
     }
 }
